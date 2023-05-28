@@ -66,7 +66,10 @@ impl<T: Io, R: Io, F: FnOnce(T::Output) -> R> Io for FlatMap<T, F> {
 
 impl<T: Run, R: Run, F: FnOnce(T::Output) -> R> Run for FlatMap<T, F> {
     fn unsafe_run_sync(self) -> Result<Self::Output, BoxError> {
-        (self.func)(self.inner.unsafe_run_sync()?).unsafe_run_sync()
+        match self.inner.unsafe_run_sync() {
+            Ok(x) => (self.func)(x).unsafe_run_sync(),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -82,7 +85,10 @@ impl<T: Io, S, F: FnOnce(T::Output) -> S> Io for Map<T, F> {
 
 impl<T: Run, S, F: FnOnce(T::Output) -> S> Run for Map<T, F> {
     fn unsafe_run_sync(self) -> Result<Self::Output, BoxError> {
-        Ok((self.func)(self.inner.unsafe_run_sync()?))
+        match self.inner.unsafe_run_sync() {
+            Ok(x) => Ok((self.func)(x)),
+            Err(e) => Err(e),
+        }
     }
 }
 
