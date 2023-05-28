@@ -1,4 +1,5 @@
 [workspace]
 members = [
     "iteration1",
+    "iteration2",
 ]
