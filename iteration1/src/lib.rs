@@ -3,28 +3,28 @@ use std::error::Error;
 type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
 pub trait Io {
-    type Output;
+    type Success;
 }
 
 pub trait IoExt: Io {
-    type FlatMap<R: Io, F: FnOnce(Self::Output) -> R>: Io;
-    fn flat_map<R: Io, F: FnOnce(Self::Output) -> R>(self, f: F) -> Self::FlatMap<R, F>;
+    type FlatMap<R: Io, F: FnOnce(Self::Success) -> R>: Io;
+    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> Self::FlatMap<R, F>;
 
-    type Map<S, F: FnOnce(Self::Output) -> S>: Io;
-    fn map<S, F: FnOnce(Self::Output) -> S>(self, f: F) -> Self::Map<S, F>;
+    type Map<S, F: FnOnce(Self::Success) -> S>: Io;
+    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Self::Map<S, F>;
 }
 
 impl<T: Io> IoExt for T {
-    type FlatMap<R: Io, F: FnOnce(Self::Output) -> R> = FlatMap<T, F>;
-    fn flat_map<R: Io, F: FnOnce(Self::Output) -> R>(self, f: F) -> Self::FlatMap<R, F> {
+    type FlatMap<R: Io, F: FnOnce(Self::Success) -> R> = FlatMap<T, F>;
+    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> Self::FlatMap<R, F> {
         FlatMap {
             inner: self,
             func: f,
         }
     }
 
-    type Map<S, F: FnOnce(Self::Output) -> S> = Map<T, F>;
-    fn map<S, F: FnOnce(Self::Output) -> S>(self, f: F) -> Self::Map<S, F> {
+    type Map<S, F: FnOnce(Self::Success) -> S> = Map<T, F>;
+    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Self::Map<S, F> {
         Map {
             inner: self,
             func: f,
@@ -33,7 +33,7 @@ impl<T: Io> IoExt for T {
 }
 
 pub trait Run: Io {
-    fn eval(self) -> Result<Self::Output, BoxError>;
+    fn eval(self) -> Result<Self::Success, BoxError>;
 }
 
 pub struct ToyIo<T>(T);
@@ -45,11 +45,11 @@ impl<T, F: FnOnce() -> T> ToyIo<F> {
 }
 
 impl<T, F: FnOnce() -> T> Io for ToyIo<F> {
-    type Output = T;
+    type Success = T;
 }
 
 impl<T, F: FnOnce() -> T> Run for ToyIo<F> {
-    fn eval(self) -> Result<Self::Output, BoxError> {
+    fn eval(self) -> Result<Self::Success, BoxError> {
         Ok(self.0())
     }
 }
@@ -60,12 +60,12 @@ pub struct FlatMap<T, F> {
     func: F,
 }
 
-impl<T: Io, R: Io, F: FnOnce(T::Output) -> R> Io for FlatMap<T, F> {
-    type Output = R::Output;
+impl<T: Io, R: Io, F: FnOnce(T::Success) -> R> Io for FlatMap<T, F> {
+    type Success = R::Success;
 }
 
-impl<T: Run, R: Run, F: FnOnce(T::Output) -> R> Run for FlatMap<T, F> {
-    fn eval(self) -> Result<Self::Output, BoxError> {
+impl<T: Run, R: Run, F: FnOnce(T::Success) -> R> Run for FlatMap<T, F> {
+    fn eval(self) -> Result<Self::Success, BoxError> {
         match self.inner.eval() {
             Ok(x) => (self.func)(x).eval(),
             Err(e) => Err(e),
@@ -79,12 +79,12 @@ pub struct Map<T, F> {
     func: F,
 }
 
-impl<T: Io, S, F: FnOnce(T::Output) -> S> Io for Map<T, F> {
-    type Output = S;
+impl<T: Io, S, F: FnOnce(T::Success) -> S> Io for Map<T, F> {
+    type Success = S;
 }
 
-impl<T: Run, S, F: FnOnce(T::Output) -> S> Run for Map<T, F> {
-    fn eval(self) -> Result<Self::Output, BoxError> {
+impl<T: Run, S, F: FnOnce(T::Success) -> S> Run for Map<T, F> {
+    fn eval(self) -> Result<Self::Success, BoxError> {
         match self.inner.eval() {
             Ok(x) => Ok((self.func)(x)),
             Err(e) => Err(e),
@@ -92,7 +92,7 @@ impl<T: Run, S, F: FnOnce(T::Output) -> S> Run for Map<T, F> {
     }
 }
 
-pub fn unsafe_run_sync<R: Run>(r: R) -> Result<R::Output, Box<dyn Error + Send + Sync + 'static>> {
+pub fn unsafe_run_sync<R: Run>(r: R) -> Result<R::Success, Box<dyn Error + Send + Sync + 'static>> {
     r.eval()
 }
 
