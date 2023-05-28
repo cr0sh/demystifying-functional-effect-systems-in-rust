@@ -33,7 +33,7 @@ impl<T: Io> IoExt for T {
 }
 
 pub trait Run: Io {
-    fn unsafe_run_sync(self) -> Result<Self::Output, BoxError>;
+    fn eval(self) -> Result<Self::Output, BoxError>;
 }
 
 pub struct ToyIo<T>(T);
@@ -49,7 +49,7 @@ impl<T, F: FnOnce() -> T> Io for ToyIo<F> {
 }
 
 impl<T, F: FnOnce() -> T> Run for ToyIo<F> {
-    fn unsafe_run_sync(self) -> Result<Self::Output, BoxError> {
+    fn eval(self) -> Result<Self::Output, BoxError> {
         Ok(self.0())
     }
 }
@@ -65,9 +65,9 @@ impl<T: Io, R: Io, F: FnOnce(T::Output) -> R> Io for FlatMap<T, F> {
 }
 
 impl<T: Run, R: Run, F: FnOnce(T::Output) -> R> Run for FlatMap<T, F> {
-    fn unsafe_run_sync(self) -> Result<Self::Output, BoxError> {
-        match self.inner.unsafe_run_sync() {
-            Ok(x) => (self.func)(x).unsafe_run_sync(),
+    fn eval(self) -> Result<Self::Output, BoxError> {
+        match self.inner.eval() {
+            Ok(x) => (self.func)(x).eval(),
             Err(e) => Err(e),
         }
     }
@@ -84,16 +84,16 @@ impl<T: Io, S, F: FnOnce(T::Output) -> S> Io for Map<T, F> {
 }
 
 impl<T: Run, S, F: FnOnce(T::Output) -> S> Run for Map<T, F> {
-    fn unsafe_run_sync(self) -> Result<Self::Output, BoxError> {
-        match self.inner.unsafe_run_sync() {
+    fn eval(self) -> Result<Self::Output, BoxError> {
+        match self.inner.eval() {
             Ok(x) => Ok((self.func)(x)),
             Err(e) => Err(e),
         }
     }
 }
 
-pub fn execute<R: Run>(r: R) -> Result<R::Output, Box<dyn Error + Send + Sync + 'static>> {
-    r.unsafe_run_sync()
+pub fn unsafe_run_sync<R: Run>(r: R) -> Result<R::Output, Box<dyn Error + Send + Sync + 'static>> {
+    r.eval()
 }
 
 #[cfg(test)]
@@ -121,6 +121,6 @@ mod tests {
         let effect = ToyIo::effect(|| println!("running first effect"))
             .flat_map(|()| ToyIo::effect(|| println!("running second effect")));
 
-        execute(effect).expect("cannot execute");
+        unsafe_run_sync(effect).expect("cannot execute");
     }
 }
