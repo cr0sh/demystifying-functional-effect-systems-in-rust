@@ -6,25 +6,21 @@ pub trait Io {
     type Success;
 }
 
-pub trait IoExt: Io {
-    type FlatMap<R: Io, F: FnOnce(Self::Success) -> R>: Io;
-    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> Self::FlatMap<R, F>;
+pub trait IoExt: Io + Sized {
+    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> FlatMap<Self, F>;
 
-    type Map<S, F: FnOnce(Self::Success) -> S>: Io;
-    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Self::Map<S, F>;
+    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Map<Self, F>;
 }
 
 impl<T: Io> IoExt for T {
-    type FlatMap<R: Io, F: FnOnce(Self::Success) -> R> = FlatMap<T, F>;
-    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> Self::FlatMap<R, F> {
+    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> FlatMap<T, F> {
         FlatMap {
             inner: self,
             func: f,
         }
     }
 
-    type Map<S, F: FnOnce(Self::Success) -> S> = Map<T, F>;
-    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Self::Map<S, F> {
+    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Map<T, F> {
         Map {
             inner: self,
             func: f,
