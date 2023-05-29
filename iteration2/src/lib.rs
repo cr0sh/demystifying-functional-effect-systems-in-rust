@@ -57,8 +57,8 @@ impl<T: 'static, E: 'static> ToyIo<T, E> {
     }
 
     /// Executes the given effect accumulating on each item of the iterator.
-    pub fn for_each<I, F>(it: I, f: F) -> ToyIoForEach<I, F> {
-        ToyIoForEach { it, func: f }
+    pub fn for_each<I, F>(it: I, f: F) -> ForEach<I, F> {
+        ForEach { it, func: f }
     }
 }
 
@@ -106,7 +106,7 @@ impl<T, U, E, F: FnOnce(T) -> ToyIo<U, E>> FlatMap for Option<FlatMapImpl<T, U, 
 }
 
 #[must_use]
-pub struct ToyIoForEach<I, F> {
+pub struct ForEach<I, F> {
     it: I,
     func: F,
 }
@@ -117,7 +117,7 @@ impl<
         T: 'static,
         E: 'static,
         F: FnOnce(Item) -> ToyIo<T, E> + Clone + 'static,
-    > Io for ToyIoForEach<I, F>
+    > Io for ForEach<I, F>
 {
     type Success = Vec<T>;
     type Error = E;
