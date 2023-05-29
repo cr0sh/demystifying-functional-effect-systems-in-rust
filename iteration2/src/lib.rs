@@ -41,11 +41,24 @@ impl<T: 'static, E: 'static> ToyIo<T, E> {
         })))
     }
 
+    /// Maps the output of this effect into another type.
+    pub fn map<U: 'static>(self, f: impl FnOnce(T) -> U + 'static) -> ToyIo<U, E> {
+        ToyIo::FlatMap(Box::new(Some(FlatMapImpl {
+            inner: self,
+            func: move |x| ToyIo::succeed(f(x)),
+        })))
+    }
+
     /// Recovers if this effect fails.
     ///
     /// The input fed to `f` is the error of this effect.
     pub fn recover(self, f: impl FnOnce(E) -> Self + 'static) -> Self {
         Self::Recover(Box::new(self), Box::new(f))
+    }
+
+    /// Executes the given effect accumulating on each item of the iterator.
+    pub fn for_each<I, F>(it: I, f: F) -> ToyIoForEach<I, F> {
+        ToyIoForEach { it, func: f }
     }
 }
 
@@ -92,13 +105,51 @@ impl<T, U, E, F: FnOnce(T) -> ToyIo<U, E>> FlatMap for Option<FlatMapImpl<T, U, 
     }
 }
 
+#[must_use]
+pub struct ToyIoForEach<I, F> {
+    it: I,
+    func: F,
+}
+
+impl<
+        Item: 'static,
+        I: Iterator<Item = Item>,
+        T: 'static,
+        E: 'static,
+        F: FnOnce(Item) -> ToyIo<T, E> + Clone + 'static,
+    > Io for ToyIoForEach<I, F>
+{
+    type Success = Vec<T>;
+    type Error = E;
+
+    fn eval(self) -> Result<Self::Success, Self::Error> {
+        self.it
+            .fold(ToyIo::effect(|| Vec::new()), |acc, curr| {
+                let func = self.func.clone();
+                acc.flat_map(move |x| {
+                    (func)(curr).map(|y| {
+                        let mut z = x;
+                        z.push(y);
+                        z
+                    })
+                })
+            })
+            .eval()
+    }
+}
+
 pub fn unsafe_run_sync<R: Io>(r: R) -> Result<R::Success, R::Error> {
     r.eval()
 }
 
 #[cfg(test)]
 mod test {
-    use std::{error::Error, fmt::Display};
+    use std::{
+        convert::Infallible,
+        error::Error,
+        fmt::Display,
+        process::{Command, Stdio},
+    };
 
     use super::*;
 
@@ -121,5 +172,28 @@ mod test {
             .recover(|e| ToyIo::effect(move || println!("recovered from failure: {e}")));
 
         unsafe_run_sync(effect).expect("cannot execute");
+    }
+
+    #[ignore = "should be tested by for_each_abort"]
+    #[test]
+    fn for_each() {
+        let effect = ToyIo::<i32, Infallible>::for_each(0..100000, |x| {
+            ToyIo::<_, Infallible>::effect(move || {
+                println!("{x}");
+                x
+            })
+        });
+
+        unsafe_run_sync(effect).expect("cannot execute");
+    }
+
+    #[test]
+    fn for_each_abort() {
+        let mut process = Command::new("cargo")
+            .args(["test", "--", "--ignored", "for_each"])
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("cannot spawn cargo");
+        assert_eq!(process.wait().expect("cannot wait cargo").code(), Some(101))
     }
 }
