@@ -1,131 +1,98 @@
-use std::error::Error;
-
-type BoxError = Box<dyn Error + Send + Sync + 'static>;
-
+/// A trait that [`ToyIo<T, E>`] should implement.
 pub trait Io {
     type Success;
+    type Error;
 
-    fn eval(self) -> Result<Self::Success, BoxError>;
+    fn eval(self) -> Result<Self::Success, Self::Error>;
 }
 
-pub trait IoExt: Io + Sized {
-    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> FlatMap<Self, F>;
-
-    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Map<Self, F>;
-
-    fn recover<U: Io<Success = Self::Success>, F: FnOnce(BoxError) -> U>(
-        self,
-        f: F,
-    ) -> Recover<Self, F>;
+/// A 'toy' IO effect that can either succeed with `T` or fail with `E`.
+pub enum ToyIo<T, E> {
+    Effect(Box<dyn FnOnce() -> Result<T, E>>),
+    Fail(E),
+    // Should be boxed to 'erase' the return type of the inner effect
+    FlatMap(Box<dyn FlatMap<Success = T, Error = E>>),
+    Recover(Box<Self>, Box<dyn FnOnce(E) -> Self>),
 }
 
-impl<T: Io> IoExt for T {
-    fn flat_map<R: Io, F: FnOnce(Self::Success) -> R>(self, f: F) -> FlatMap<T, F> {
-        FlatMap {
+impl<T: 'static, E: 'static> ToyIo<T, E> {
+    /// Creates an effect which immediatly succeeds with the value given.
+    pub fn succeed(x: T) -> Self {
+        Self::Effect(Box::new(move || Ok(x)))
+    }
+
+    /// Creates a succeeding effect which executes the function given.
+    pub fn effect(f: impl FnOnce() -> T + 'static) -> Self {
+        Self::Effect(Box::new(move || Ok(f())))
+    }
+
+    /// Creates a failing effect with given value.
+    pub fn fail(err: E) -> Self {
+        Self::Fail(err)
+    }
+
+    /// Executes the effect given after this effect succeeds.
+    ///
+    /// The input fed to `f` is the result of this effect.
+    pub fn flat_map<U: 'static>(self, f: impl FnOnce(T) -> ToyIo<U, E> + 'static) -> ToyIo<U, E> {
+        ToyIo::FlatMap(Box::new(Some(FlatMapImpl {
             inner: self,
             func: f,
-        }
+        })))
     }
 
-    fn map<S, F: FnOnce(Self::Success) -> S>(self, f: F) -> Map<T, F> {
-        Map {
-            inner: self,
-            func: f,
-        }
-    }
-
-    fn recover<U: Io<Success = T::Success>, F: FnOnce(BoxError) -> U>(
-        self,
-        f: F,
-    ) -> Recover<Self, F> {
-        Recover {
-            inner: self,
-            func: f,
-        }
+    /// Recovers if this effect fails.
+    ///
+    /// The input fed to `f` is the error of this effect.
+    pub fn recover(self, f: impl FnOnce(E) -> Self + 'static) -> Self {
+        Self::Recover(Box::new(self), Box::new(f))
     }
 }
 
-pub struct ToyIo<T>(T);
-
-impl<T, F: FnOnce() -> T> ToyIo<F> {
-    pub fn effect(f: F) -> Self {
-        Self(f)
-    }
-}
-
-impl<T, F: FnOnce() -> T> Io for ToyIo<F> {
+impl<T, E> Io for ToyIo<T, E> {
     type Success = T;
 
-    fn eval(self) -> Result<Self::Success, BoxError> {
-        Ok(self.0())
-    }
-}
+    type Error = E;
 
-pub struct ToyIoFail<E>(E);
-
-impl<E> ToyIoFail<E> {
-    pub fn fail(e: E) -> Self {
-        Self(e)
-    }
-}
-
-impl<E: Error + Send + Sync + 'static> Io for ToyIoFail<E> {
-    type Success = Never;
-
-    fn eval(self) -> Result<Self::Success, BoxError> {
-        Err(Box::new(self.0))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Never {}
-
-#[must_use]
-pub struct FlatMap<T, F> {
-    inner: T,
-    func: F,
-}
-
-impl<T: Io, R: Io, F: FnOnce(T::Success) -> R> Io for FlatMap<T, F> {
-    type Success = R::Success;
-
-    fn eval(self) -> Result<Self::Success, BoxError> {
-        (self.func)(self.inner.eval()?).eval()
-    }
-}
-
-#[must_use]
-pub struct Map<T, F> {
-    inner: T,
-    func: F,
-}
-
-impl<T: Io, S, F: FnOnce(T::Success) -> S> Io for Map<T, F> {
-    type Success = S;
-
-    fn eval(self) -> Result<Self::Success, BoxError> {
-        Ok((self.func)(self.inner.eval()?))
-    }
-}
-
-#[must_use]
-pub struct Recover<T, F> {
-    inner: T,
-    func: F,
-}
-
-impl<T, S: Io<Success = T>, U: Io<Success = T>, F: FnOnce(BoxError) -> U> Io for Recover<S, F> {
-    type Success = T;
-
-    fn eval(self) -> Result<Self::Success, BoxError> {
-        match self.inner.eval() {
-            Ok(x) => Ok(x),
-            Err(e) => (self.func)(e).eval(),
+    fn eval(self) -> Result<Self::Success, Self::Error> {
+        match self {
+            ToyIo::Effect(eff) => eff(),
+            ToyIo::Fail(e) => Err(e),
+            ToyIo::FlatMap(mut inner) => inner.mapped().eval(),
+            ToyIo::Recover(inner, f) => match inner.eval() {
+                Ok(x) => Ok(x),
+                Err(e) => f(e).eval(),
+            },
         }
     }
 }
 
-pub fn unsafe_run_sync<R: Run>(r: R) -> Result<R::Success, Box<dyn Error + Send + Sync + 'static>> {
+pub trait FlatMap {
+    type Success;
+    type Error;
+
+    fn mapped(&mut self) -> ToyIo<Self::Success, Self::Error>;
+}
+
+struct FlatMapImpl<T, U, E, F: FnOnce(T) -> ToyIo<U, E>> {
+    inner: ToyIo<T, E>,
+    func: F,
+}
+
+impl<T, U, E, F: FnOnce(T) -> ToyIo<U, E>> FlatMap for Option<FlatMapImpl<T, U, E, F>> {
+    type Success = U;
+    type Error = E;
+
+    fn mapped(&mut self) -> ToyIo<Self::Success, Self::Error> {
+        let this = self.take().unwrap();
+        match this.inner.eval().map(|x| (this.func)(x)) {
+            Ok(eff) => eff,
+            Err(e) => ToyIo::Fail(e),
+        }
+    }
+}
+
+pub fn unsafe_run_sync<R: Io>(r: R) -> Result<R::Success, R::Error> {
     r.eval()
 }
 
@@ -149,8 +116,8 @@ mod test {
     #[test]
     fn fail_and_recover() {
         let effect = ToyIo::effect(|| println!("running first effect"))
-            .flat_map(|_| ToyIoFail::fail(StrError("some error")))
-            .flat_map(|_| ToyIo::effect(|| println!("second effect - will not run")))
+            .flat_map(|()| ToyIo::fail(StrError("some error")))
+            .flat_map(|()| ToyIo::effect(|| println!("second effect - will not run")))
             .recover(|e| ToyIo::effect(move || println!("recovered from failure: {e}")));
 
         unsafe_run_sync(effect).expect("cannot execute");
