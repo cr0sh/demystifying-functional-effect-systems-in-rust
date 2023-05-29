@@ -192,6 +192,7 @@ mod test {
         let mut process = Command::new("cargo")
             .args(["test", "--", "--ignored", "for_each"])
             .stderr(Stdio::null())
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
             .spawn()
             .expect("cannot spawn cargo");
         assert_eq!(process.wait().expect("cannot wait cargo").code(), Some(101))
