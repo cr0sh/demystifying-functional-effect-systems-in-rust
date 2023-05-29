@@ -4,6 +4,8 @@ type BoxError = Box<dyn Error + Send + Sync + 'static>;
 
 pub trait Io {
     type Success;
+
+    fn eval(self) -> Result<Self::Success, BoxError>;
 }
 
 pub trait IoExt: Io + Sized {
@@ -43,10 +45,6 @@ impl<T: Io> IoExt for T {
     }
 }
 
-pub trait Run: Io {
-    fn eval(self) -> Result<Self::Success, BoxError>;
-}
-
 pub struct ToyIo<T>(T);
 
 impl<T, F: FnOnce() -> T> ToyIo<F> {
@@ -57,9 +55,7 @@ impl<T, F: FnOnce() -> T> ToyIo<F> {
 
 impl<T, F: FnOnce() -> T> Io for ToyIo<F> {
     type Success = T;
-}
 
-impl<T, F: FnOnce() -> T> Run for ToyIo<F> {
     fn eval(self) -> Result<Self::Success, BoxError> {
         Ok(self.0())
     }
@@ -73,11 +69,9 @@ impl<E> ToyIoFail<E> {
     }
 }
 
-impl<E> Io for ToyIoFail<E> {
+impl<E: Error + Send + Sync + 'static> Io for ToyIoFail<E> {
     type Success = Never;
-}
 
-impl<E: Error + Send + Sync + 'static> Run for ToyIoFail<E> {
     fn eval(self) -> Result<Self::Success, BoxError> {
         Err(Box::new(self.0))
     }
@@ -94,9 +88,7 @@ pub struct FlatMap<T, F> {
 
 impl<T: Io, R: Io, F: FnOnce(T::Success) -> R> Io for FlatMap<T, F> {
     type Success = R::Success;
-}
 
-impl<T: Run, R: Run, F: FnOnce(T::Success) -> R> Run for FlatMap<T, F> {
     fn eval(self) -> Result<Self::Success, BoxError> {
         (self.func)(self.inner.eval()?).eval()
     }
@@ -110,9 +102,7 @@ pub struct Map<T, F> {
 
 impl<T: Io, S, F: FnOnce(T::Success) -> S> Io for Map<T, F> {
     type Success = S;
-}
 
-impl<T: Run, S, F: FnOnce(T::Success) -> S> Run for Map<T, F> {
     fn eval(self) -> Result<Self::Success, BoxError> {
         Ok((self.func)(self.inner.eval()?))
     }
@@ -126,9 +116,7 @@ pub struct Recover<T, F> {
 
 impl<T, S: Io<Success = T>, U: Io<Success = T>, F: FnOnce(BoxError) -> U> Io for Recover<S, F> {
     type Success = T;
-}
 
-impl<T, S: Run<Success = T>, U: Run<Success = T>, F: FnOnce(BoxError) -> U> Run for Recover<S, F> {
     fn eval(self) -> Result<Self::Success, BoxError> {
         match self.inner.eval() {
             Ok(x) => Ok(x),
